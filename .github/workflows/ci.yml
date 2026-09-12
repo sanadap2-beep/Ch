@@ -11,8 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
-    # Real PostgreSQL, not SQLite: the migration and the boot check then run
-    # against the same driver (asyncpg) and server used in production.
+    # Real PostgreSQL, not SQLite: migrations and the boot check then run against
+    # the same driver (asyncpg) and server version used in production.
     services:
       postgres:
         image: postgres:16-alpine
@@ -24,13 +24,13 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U coach -d coach_ci"
-          --health-interval 10s
+          --health-interval 5s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
 
     env:
       # Placeholder credentials so config validation passes. The suite is fully
-      # offline (AI calls are faked) so no real secret is ever needed here.
+      # offline (AI calls are faked), so no real secret is ever needed in CI.
       BOT_TOKEN: "123456789:CI-token-not-real"
       NANOGPT_API_KEY: "ci-key-not-real"
       ADMIN_IDS: "1"
@@ -60,39 +60,25 @@ jobs:
       - name: Ruff
         run: ruff check app tests
 
-      # Migrations first, so the boot check below finds a real schema.
-      - name: Alembic migration applies against a clean PostgreSQL database
-        run: |
-          alembic upgrade head
-          echo "── tables created ──"
-          python - <<'PY'
-          import asyncio, os
-          from sqlalchemy.ext.asyncio import create_async_engine
-          from sqlalchemy import text
+      # Split into one command per step: a failure names the exact broken command
+      # in the job summary, which is easier to act on than a wall of logs.
+      - name: PostgreSQL is reachable
+        run: python scripts/verify_schema.py --ping
 
-          async def main() -> None:
-              engine = create_async_engine(os.environ["DATABASE_URL"])
-              async with engine.connect() as conn:
-                  rows = (await conn.execute(text(
-                      "select table_name from information_schema.tables "
-                      "where table_schema='public' order by table_name"
-                  ))).scalars().all()
-              await engine.dispose()
-              print(f"{len(rows)} tables:")
-              for name in rows:
-                  print(f"  {name}")
-              assert len(rows) >= 21, f"expected >=21 tables, got {len(rows)}"
+      - name: Alembic upgrade head
+        run: alembic upgrade head
 
-          asyncio.run(main())
-          PY
+      - name: Schema has every expected table
+        run: python scripts/verify_schema.py --expect 21
+
+      - name: Alembic reports no model drift
+        run: alembic check
 
       - name: Every module imports and the dispatcher builds
         run: ./scripts/run.sh --check
 
       - name: Pytest (offline — no network, no secrets needed)
-        run: |
-          mkdir -p storage/tmp
-          pytest -q --maxfail=5
+        run: pytest -q --maxfail=5
 
-      - name: Config/docs drift guards
+      - name: Config, docs and dependency drift guards
         run: pytest tests/test_config_docs.py tests/test_dependencies.py -q
