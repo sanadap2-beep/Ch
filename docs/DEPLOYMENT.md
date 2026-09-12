@@ -121,6 +121,9 @@ volumes: { pgdata: {}, media: {} }
 
 Run migrations once inside the container: `docker compose run --rm bot alembic upgrade head`.
 
+`deploy/Caddyfile` is a ready reverse proxy for webhook mode (automatic HTTPS); the
+`caddy` service in `docker-compose.yml` is commented out and references it.
+
 ## 6. Webhook mode (optional)
 
 ```dotenv

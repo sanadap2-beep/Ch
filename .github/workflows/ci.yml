@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "arena/**"]
+  pull_request:
+
+jobs:
+  quality:
+    name: Lint & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system libraries (Pillow, Arabic fonts for charts/PDF)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libjpeg-dev zlib1g-dev fonts-dejavu-core
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install -r requirements.txt -r requirements-dev.txt
+          pip install ruff arabic-reshaper python-bidi fonttools
+
+      - name: Ruff
+        run: ruff check app tests
+
+      - name: Every module imports and the dispatcher builds
+        env:
+          BOT_TOKEN: "123456789:CI-token-not-real"
+          NANOGPT_API_KEY: "ci-key-not-real"
+          DATABASE_URL: "sqlite+aiosqlite:///./storage/tmp/ci-check.db"
+        run: ./scripts/run.sh --check
+
+      - name: Pytest (offline — no network, no secrets needed)
+        env:
+          BOT_TOKEN: "123456789:CI-token-not-real"
+          NANOGPT_API_KEY: "ci-key-not-real"
+        run: pytest -q --maxfail=5
+
+      - name: Alembic migration applies against a clean database
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///./storage/tmp/ci-migration.db"
+          DB_AUTO_CREATE: "false"
+        run: |
+          mkdir -p storage/tmp
+          alembic upgrade head
+          alembic check || true    # autogenerate drift is reported, not fatal, on SQLite

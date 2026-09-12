@@ -98,6 +98,17 @@ python -m app.main                   # long polling (الافتراضي)
 # أو مع webhook:
 WEBHOOK_URL=https://bot.example.com python -m app.main
 ```
+
+أو عبر Docker (الملفات جاهزة في المستودع):
+```bash
+docker compose up -d --build         # PostgreSQL + البوت + تطبيق الهجرات تلقائيًا
+docker compose logs -f bot
+```
+
+**ملفات التسليم**: `Dockerfile` · `docker-compose.yml` · `.dockerignore` ·
+`scripts/docker-entrypoint.sh` (ينتظر قاعدة البيانات ثم `alembic upgrade head`) ·
+`deploy/Caddyfile` (HTTPS لوضع webhook) · `.github/workflows/ci.yml` (ruff + pytest +
+فحص الإقلاع + تطبيق الهجرات عند كل push/PR).
 عند الإقلاع: تهيئة قاعدة البيانات ← إنشاء البوت ← تسجيل الأوامر ← تشغيل المجدول (تذكيرات/إرساليات/تجديد اشتراكات/تنظيف وسائط/تقارير) ← البدء بالاستقبال.
 الإيقاف نظيف (SIGTERM/SIGINT): إيقاف المجدول ← إغلاق عميل الذكاء الاصطناعي ← إغلاق البوت ← إغلاق الاتصالات.
 
@@ -105,7 +116,7 @@ WEBHOOK_URL=https://bot.example.com python -m app.main
 
 ## 🧪 الاختبارات والجودة
 ```bash
-pytest -q            # 315 اختبارًا على SQLite مع ذكاء اصطناعي مُحاكى (بدون شبكة)
+pytest -q            # 334 اختبارًا على SQLite مع ذكاء اصطناعي مُحاكى (بدون شبكة)
 ruff check app tests # نظيف
 ./scripts/run.sh --check   # فحص الإعدادات + بناء الـdispatcher + الاتصال بقاعدة البيانات
 ```
@@ -125,6 +136,7 @@ ruff check app tests # نظيف
 | `test_jobs.py` | 25 | المهام الخلفية: المجدول، التذكيرات، الإرسال، تجديد الاشتراكات، الحذف الدوري |
 | `test_boot.py` | 10 | الإقلاع/الإيقاف، وضع webhook بخادم aiohttp حقيقي وتحقق من التوقيع |
 | `test_journey.py` | 2 | **رحلة مستخدم كاملة**: من `/start` بالإحالة حتى حذف الحساب، + سلوك عند انقطاع الذكاء الاصطناعي |
+| `test_config_docs.py` | 19 | تطابق `.env.example` مع الإعدادات (124)، عدم تسريب مفاتيح حقيقية، وسلامة Docker/CI |
 
 اختبارات الطبقة الأخيرة تُمرِّر `Update` حقيقية عبر الـdispatcher الإنتاجي (بجلسة Telegram
 مُحاكاة داخل العملية) فتتحقق من: التوجيه، حالات FSM، البوابات (حظر/قناة/موافقة/خنق)،

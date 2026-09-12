@@ -1,0 +1,54 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Local / single-host deployment: PostgreSQL + the bot.
+#    cp .env.example .env   # set BOT_TOKEN, NANOGPT_API_KEY, ADMIN_IDS
+#    docker compose up -d --build
+#    docker compose logs -f bot
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-coach}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_coach}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-coach} -d ${POSTGRES_DB:-ai_coach}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # overrides whatever is in .env so the container always talks to the db service
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-coach}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-ai_coach}
+      DB_AUTO_CREATE: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - media:/app/storage/media
+      # uncomment to serve a nicer Arabic font for charts/PDF reports
+      # - ./assets/fonts:/app/assets/fonts:ro
+    stop_grace_period: 30s
+
+  # Webhook mode: terminate TLS in front and point WEBHOOK_URL at it.
+  # Uncomment, set WEBHOOK_URL/WEBHOOK_SECRET in .env, and expose 443/80.
+  # caddy:
+  #   image: caddy:2-alpine
+  #   restart: unless-stopped
+  #   ports: ["80:80", "443:443"]
+  #   volumes:
+  #     - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy_data:/data
+  #   depends_on: [bot]
+
+volumes:
+  pgdata:
+  media:
+  caddy_data:

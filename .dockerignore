@@ -1,0 +1,36 @@
+# Keep the image small and never bake secrets or local state into it.
+.git
+.gitignore
+.github
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# local state / user data
+storage
+logs
+backups
+*.db
+*.sqlite
+*.sqlite3
+
+# secrets — always injected at runtime via --env-file / env_file
+.env
+.env.*
+!.env.example
+
+# docs & dev-only material
+docs
+README.md
+Dockerfile
+docker-compose.yml
+.dockerignore
+deploy
+scripts/*.md

@@ -1,0 +1,36 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Caddy reverse proxy for webhook mode (automatic HTTPS).
+#
+#  deploy/Caddyfile — used by the commented-out `caddy` service in
+#  docker-compose.yml. Requirements:
+#    • a DNS A/AAAA record for your domain pointing at this host
+#    • ports 80 and 443 reachable from the internet (Telegram validates the cert)
+#    • .env: WEBHOOK_URL=https://bot.example.com  WEBHOOK_SECRET=<random 64 chars>
+#           WEBHOOK_HOST=0.0.0.0  WEBHOOK_PORT=8080
+# ─────────────────────────────────────────────────────────────────────────────
+
+{$BOT_DOMAIN:bot.example.com} {
+	encode zstd gzip
+
+	# Telegram posts updates here; everything else is noise.
+	handle_path /webhook* {
+		reverse_proxy bot:{$WEBHOOK_PORT:8080} {
+			# preserve the secret-token header so aiogram can verify the sender
+			header_up X-Telegram-Bot-Api-Secret-Token {http.request.header.X-Telegram-Bot-Api-Secret-Token}
+		}
+	}
+
+	# A tiny liveness endpoint for uptime monitors.
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	handle {
+		respond "not found" 404
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
