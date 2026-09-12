@@ -1,0 +1,40 @@
+# ─────────────────────────────────────────────────────────────
+#  AI Fitness & Nutrition Coach Telegram Bot — runtime deps
+#  Python 3.11+
+# ─────────────────────────────────────────────────────────────
+
+# Telegram bot framework
+aiogram==3.31.0
+
+# Database (async ORM + drivers)
+SQLAlchemy[asyncio]==2.0.52
+asyncpg==0.31.0          # PostgreSQL driver (production)
+aiosqlite==0.22.1        # SQLite driver (local dev / tests)
+alembic==1.20.0          # schema migrations
+greenlet>=3.0            # required by SQLAlchemy async
+
+# Configuration / validation
+pydantic==2.13.5
+pydantic-settings==2.15.0
+
+# HTTP client for the NanoGPT API (chat / vision / STT)
+httpx==0.28.1
+
+# Scheduling (reminders, subscription renewal, weekly reports)
+APScheduler==3.11.3
+
+# Charts (progress graphs sent as images)
+matplotlib==3.11.2
+
+# PDF export (user journey report)
+reportlab==5.0.1
+arabic-reshaper>=3.0.0
+python-bidi>=0.6.0
+
+# Image handling (progress photos, compression before upload)
+pillow==12.3.0
+
+# Object storage (S3-compatible) for daily photos / food images
+boto3==1.43.93
+
+# ── development / testing (install with: pip install -r requirements-dev.txt) ──
