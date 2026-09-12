@@ -25,6 +25,7 @@ APScheduler==3.11.3
 
 # Charts (progress graphs sent as images)
 matplotlib==3.11.2
+numpy>=1.26              # imported directly by app/services/charts.py
 
 # PDF export (user journey report)
 reportlab==5.0.1
@@ -36,5 +37,9 @@ pillow==12.3.0
 
 # Object storage (S3-compatible) for daily photos / food images
 boto3==1.43.93
+
+# Webhook mode serves updates over aiohttp (imported directly in app/main.py).
+# aiogram pulls it in transitively, but a direct import must be a direct dependency.
+aiohttp>=3.9
 
 # ── development / testing (install with: pip install -r requirements-dev.txt) ──
