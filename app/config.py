@@ -12,10 +12,10 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from app.constants import AITask
 
@@ -23,7 +23,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 def _split_csv(value: Any) -> Any:
-    """Allow both ``"1,2,3"`` and ``'[1,2,3]'`` in env vars for list fields."""
+    """Allow ``"1,2,3"``, ``'[1,2,3]'`` and a bare ``1`` in env vars for list fields.
+
+    pydantic-settings JSON-decodes the env value of a complex field *before* the
+    ``mode="before"`` validator runs, so a single value arrives already parsed:
+    ``ADMIN_IDS=123456789`` — the common one-admin case — reaches the validator as
+    an ``int``, not a string. Returning it unchanged made the list comprehension
+    downstream raise ``TypeError: 'int' object is not iterable``, which killed the
+    boot with an error that never mentions ADMIN_IDS. Wrap scalars instead.
+    """
     if value is None or isinstance(value, (list, tuple)):
         return value
     if isinstance(value, str):
@@ -33,7 +41,9 @@ def _split_csv(value: Any) -> Any:
         if raw.startswith("["):
             return json.loads(raw)
         return [item.strip() for item in raw.split(",") if item.strip()]
-    return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return [value]
+    return [value]
 
 
 def _parse_json_map(value: Any) -> Any:
@@ -45,6 +55,12 @@ def _parse_json_map(value: Any) -> Any:
 
 
 class Settings(BaseSettings):
+    # Every list/dict field is wrapped in ``NoDecode``: pydantic-settings would
+    # otherwise JSON-decode its env value *before* the mode="before" validators
+    # run, so the documented comma-separated form (ADMIN_IDS=111,222) raised
+    # SettingsError and a single value (ADMIN_IDS=123) arrived as an int and blew
+    # up the validator with "TypeError: 'int' object is not iterable". With
+    # NoDecode the raw string reaches _split_csv, which accepts all three forms.
     model_config = SettingsConfigDict(
         env_file=(BASE_DIR / ".env"),
         env_file_encoding="utf-8",
@@ -60,7 +76,7 @@ class Settings(BaseSettings):
 
     # ── Telegram bot ─────────────────────────────────────────────────────────
     bot_token: str = ""
-    admin_ids: list[int] = Field(default_factory=list)
+    admin_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
     support_username: str | None = None               # @handle shown on errors
     bot_description: str = "كوتش رياضي وتغذية بالذكاء الاصطناعي"
 
@@ -110,17 +126,17 @@ class Settings(BaseSettings):
     nanogpt_temperature: float = 0.75
     nanogpt_max_tokens: int = 1600
     # Task → ordered model chain (first = primary, rest = fallbacks).
-    model_routing: dict[str, list[str]] = Field(default_factory=dict)
+    model_routing: Annotated[dict[str, list[str]], NoDecode] = Field(default_factory=dict)
     model_consult: str = "z-ai/glm-5.3-flash"
     model_coach: str = "deepseek/deepseek-v4-pro"
     model_vision: str = "google/gemini-3.5-flash-lite"
     model_plan: str = "deepseek/deepseek-v4-pro"
     model_summary: str = "z-ai/glm-5.3-flash"
     model_stt: str = "Whisper-Large-V3"
-    fallback_consult: list[str] = Field(default_factory=lambda: ["deepseek/deepseek-v4-flash"])
-    fallback_coach: list[str] = Field(default_factory=lambda: ["z-ai/glm-5.3-flash"])
-    fallback_vision: list[str] = Field(default_factory=lambda: ["google/gemini-3.5-flash"])
-    fallback_stt: list[str] = Field(default_factory=lambda: ["Wizper", "gpt-4o-mini-transcribe"])
+    fallback_consult: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["deepseek/deepseek-v4-flash"])
+    fallback_coach: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["z-ai/glm-5.3-flash"])
+    fallback_vision: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["google/gemini-3.5-flash"])
+    fallback_stt: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["Wizper", "gpt-4o-mini-transcribe"])
     web_search_enabled: bool = True                   # use ':online' suffix / web_search
     ai_reasoning_effort: str | None = None            # none|low|medium|high (if supported)
 
@@ -130,7 +146,7 @@ class Settings(BaseSettings):
     voice_charge_points: int = 0                      # 0 = free (STT cost is metered by usage caps)
 
     # Cost table (USD per 1M tokens) used only when the API does not echo cost.
-    model_pricing: dict[str, list[float]] = Field(
+    model_pricing: Annotated[dict[str, list[float]], NoDecode] = Field(
         default_factory=lambda: {
             "z-ai/glm-5.3-flash": [0.08, 0.25],
             "deepseek/deepseek-v4-pro": [1.10, 2.20],
@@ -139,7 +155,7 @@ class Settings(BaseSettings):
             "google/gemini-3.5-flash": [0.60, 4.00],
         }
     )
-    default_pricing: list[float] = Field(default_factory=lambda: [1.0, 3.0])
+    default_pricing: Annotated[list[float], NoDecode] = Field(default_factory=lambda: [1.0, 3.0])
 
     # ── points economy ───────────────────────────────────────────────────────
     points_per_usd: int = 100                # 1 USD == 100 points
@@ -173,7 +189,7 @@ class Settings(BaseSettings):
     referral_bonus_every: int = 5            # extra bonus every N successful refs
     referral_bonus_points: int = 100
     streak_reward_points: int = 10           # per completed streak milestone day
-    streak_milestones: list[int] = Field(default_factory=lambda: [3, 7, 14, 30, 60, 100])
+    streak_milestones: Annotated[list[int], NoDecode] = Field(default_factory=lambda: [3, 7, 14, 30, 60, 100])
 
     # ── subscriptions (spec §5.9) ────────────────────────────────────────────
     monthly_plan_points: int = 1500
@@ -181,7 +197,7 @@ class Settings(BaseSettings):
 
     # ── forced channel subscription (spec §4) ────────────────────────────────
     forced_channels_enabled: bool = False
-    forced_channels: list[str] = Field(default_factory=list)   # @username or -100id
+    forced_channels: Annotated[list[str], NoDecode] = Field(default_factory=list)   # @username or -100id
 
     # ── YouTube links for exercises ──────────────────────────────────────────
     youtube_api_key: str | None = None
@@ -247,6 +263,16 @@ class Settings(BaseSettings):
     @classmethod
     def _v_csv_int(cls, v: Any) -> Any:
         return [int(x) for x in (_split_csv(v) or [])]
+
+    @field_validator("default_pricing", mode="before")
+    @classmethod
+    def _v_csv_float(cls, v: Any) -> Any:
+        """``DEFAULT_PRICING=1.5,4.5`` as well as ``[1.5, 4.5]``.
+
+        Every NoDecode field needs a validator that turns the raw env string into
+        a list; without one, pydantic rejects the string outright.
+        """
+        return [float(x) for x in (_split_csv(v) or [])]
 
     @field_validator("model_routing", "model_pricing", mode="before")
     @classmethod

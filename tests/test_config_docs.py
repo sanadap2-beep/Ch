@@ -142,3 +142,104 @@ def test_documented_entrypoints_exist() -> None:
                    "scripts/docker-entrypoint.sh"):
         path = ROOT / script
         assert path.stat().st_mode & 0o111, f"{script} is not executable"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  env parsing: the documented formats must actually load
+# ═══════════════════════════════════════════════════════════════════════════
+def _active_env_pairs(text: str) -> dict[str, str]:
+    """Uncommented ``KEY=VALUE`` pairs, in file order."""
+    pairs: dict[str, str] = {}
+    for line in text.splitlines():
+        if line.strip().startswith("#"):
+            continue
+        if m := re.match(r"^([A-Za-z0-9_]+)=(.*)$", line):
+            pairs[m.group(1)] = m.group(2).strip()
+    return pairs
+
+
+def test_env_example_loads_as_a_real_env_file(tmp_path: Path) -> None:
+    """`cp .env.example .env`, fill in the secrets, and the app must boot.
+
+    Loaded as an env *file* — the path a real deploy takes — so inline comments
+    are stripped by python-dotenv exactly as they are in production.
+
+    This is the guard that would have caught the comma-separated list fields:
+    pydantic-settings JSON-decodes a complex field's env value before validators
+    run, so the documented ``ADMIN_IDS=111111111,222222222`` raised SettingsError
+    and a single ``ADMIN_IDS=123`` crashed with "TypeError: 'int' object is not
+    iterable" — an error that never mentions the offending variable.
+    """
+    env_file = tmp_path / ".env"
+    env_file.write_text(ENV_EXAMPLE, encoding="utf-8")
+
+    settings = Settings(_env_file=env_file)  # must not raise
+
+    assert settings.admin_ids == [111111111, 222222222]
+    assert all(isinstance(i, int) for i in settings.admin_ids)
+    # inline comments must not leak into the parsed values
+    assert settings.protect_content is False
+    assert settings.db_auto_create is True
+    assert settings.support_username == "@your_support"
+    assert "#" not in settings.bot_token
+
+
+def test_env_example_pairs_are_all_known_settings() -> None:
+    """The uncommented lines a user actually inherits must map to real fields."""
+    unknown = {
+        key for key in _active_env_pairs(ENV_EXAMPLE)
+        if key.upper() not in FIELD_NAMES
+    }
+    assert not unknown, f".env.example sets keys that do nothing: {sorted(unknown)}"
+
+
+@pytest.mark.parametrize(("env_var", "field", "value", "expected"), [
+    ("ADMIN_IDS", "admin_ids", "123456789", [123456789]),
+    ("ADMIN_IDS", "admin_ids", "111111111,222222222", [111111111, 222222222]),
+    ("ADMIN_IDS", "admin_ids", " 1 , 2 ", [1, 2]),
+    ("ADMIN_IDS", "admin_ids", "[1,2]", [1, 2]),
+    ("ADMIN_IDS", "admin_ids", "", []),
+    ("STREAK_MILESTONES", "streak_milestones", "7", [7]),
+    ("STREAK_MILESTONES", "streak_milestones", "3,7,14", [3, 7, 14]),
+    ("FORCED_CHANNELS", "forced_channels", "@chan,-100123", ["@chan", "-100123"]),
+    ("FALLBACK_COACH", "fallback_coach", "a/b,c/d", ["a/b", "c/d"]),
+    ("DEFAULT_PRICING", "default_pricing", "1.5,4.5", [1.5, 4.5]),
+    ("MODEL_ROUTING", "model_routing", '{"consult":["x/y"]}', {"consult": ["x/y"]}),
+    ("MODEL_PRICING", "model_pricing", '{"x/y":[1.0,2.0]}', {"x/y": [1.0, 2.0]}),
+])
+def test_complex_env_values_parse(
+    monkeypatch: pytest.MonkeyPatch, env_var: str, field: str, value: str, expected: object
+) -> None:
+    """Both the comma-separated and the JSON spelling of every list/dict setting."""
+    monkeypatch.setenv(env_var, value)
+    assert getattr(Settings(_env_file=None), field) == expected
+
+
+def test_every_complex_setting_has_a_no_decode_validator() -> None:
+    """A NoDecode field without a validator rejects any env string outright."""
+    from typing import get_origin
+
+    import pydantic_settings
+
+    complex_types = (list, dict, set)
+    for name, field in Settings.model_fields.items():
+        # pydantic unpacks Annotated: the inner type stays on .annotation and the
+        # markers move to .metadata.
+        if get_origin(field.annotation) not in complex_types:
+            continue
+
+        assert pydantic_settings.NoDecode in field.metadata, (
+            f"{name} is a complex field without NoDecode: pydantic-settings will "
+            f"JSON-decode its env value before validators run, breaking the "
+            f"comma-separated form documented in .env.example"
+        )
+
+        validated = {
+            v
+            for decorator in Settings.__pydantic_decorators__.field_validators.values()
+            for v in decorator.info.fields
+        }
+        assert name in validated, (
+            f"{name} is NoDecode but has no mode='before' validator, so the raw "
+            f"env string reaches pydantic and fails list/dict validation"
+        )

@@ -116,7 +116,7 @@ docker compose logs -f bot
 
 ## 🧪 الاختبارات والجودة
 ```bash
-pytest -q            # 338 اختبارًا على SQLite مع ذكاء اصطناعي مُحاكى (بدون شبكة)
+pytest -q            # 353 اختبارًا على SQLite مع ذكاء اصطناعي مُحاكى (بدون شبكة)
 ruff check app tests # نظيف
 ./scripts/run.sh --check   # فحص الإعدادات + بناء الـdispatcher + الاتصال بقاعدة البيانات
 ```
@@ -136,7 +136,7 @@ ruff check app tests # نظيف
 | `test_jobs.py` | 25 | المهام الخلفية: المجدول، التذكيرات، الإرسال، تجديد الاشتراكات، الحذف الدوري |
 | `test_boot.py` | 10 | الإقلاع/الإيقاف، وضع webhook بخادم aiohttp حقيقي وتحقق من التوقيع |
 | `test_journey.py` | 2 | **رحلة مستخدم كاملة**: من `/start` بالإحالة حتى حذف الحساب، + سلوك عند انقطاع الذكاء الاصطناعي |
-| `test_config_docs.py` | 19 | تطابق `.env.example` مع الإعدادات (124)، عدم تسريب مفاتيح حقيقية، وسلامة Docker/CI |
+| `test_config_docs.py` | 34 | تطابق `.env.example` مع الإعدادات (124)، **تحميله كملف `.env` حقيقي**، صيَغ القوائم (CSV/JSON)، عدم تسريب مفاتيح، وسلامة Docker/CI |
 | `test_dependencies.py` | 4 | تدقيق الاعتماديات: كل `import` خارجي مُعلَن في `requirements*.txt` (ولا عكس ذلك) |
 
 اختبارات الطبقة الأخيرة تُمرِّر `Update` حقيقية عبر الـdispatcher الإنتاجي (بجلسة Telegram

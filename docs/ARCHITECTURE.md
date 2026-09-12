@@ -167,7 +167,7 @@ reminders, safety, i18n, privacy, admin, webhook. Anything the product team may 
 * **Static guards** (`test_i18n_keyboards.py`) walk the AST of `app/` for two bug classes that
   only explode at send time: a bare `InlineKeyboardBuilder` passed as `reply_markup`, and long
   literals packed into callback data (Telegram's cap is 64 bytes; Arabic is ~2 bytes/char).
-* 315 tests across 11 files — see the coverage table in `README.md`.
+* 353 tests across 13 files — see the coverage table in `README.md`.
 
 ### Bugs this layer caught (all fixed)
 
@@ -183,6 +183,8 @@ reminders, safety, i18n, privacy, admin, webhook. Anything the product team may 
 | `rule.time_of_day` (model has `hour`/`minute`) | the reminder toggle button crashed |
 | Telegram's client locale overwrote the chosen language on every update | switching to English reverted to Arabic on the next message |
 | `editMessageText` sent with a reply keyboard | "re-check channel subscription" crashed instead of showing the menu |
+| `my_chat_member` missing from `ALLOWED_UPDATES` and unhandled | blocking the bot was invisible: reminders kept firing at a chat that had kicked the bot |
+| List settings lacked `NoDecode`, and `_split_csv` passed scalars through | **the documented `.env.example` format was fatal**: `ADMIN_IDS=111,222` raised `SettingsError`, and a single `ADMIN_IDS=123` — the common one-admin deploy — crashed the boot with `TypeError: 'int' object is not iterable`, an error that never names the variable |
 | `BroadcastService.create()` opened a second session | on SQLite (documented dev path) → "database is locked"; now reuses the request session |
 | GDPR wipe left body metrics/daily logs behind | `deactivate_user_data` now clears them and deletes `daily_logs` |
 | `CommandStart(deep_link=True)` swallowed bare `/start` | see the table above — fixed by registering both filters |
