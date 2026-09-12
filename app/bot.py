@@ -60,7 +60,8 @@ def build_dispatcher(bot: Bot) -> Dispatcher:
     # the resolved HandlerObject into `data["handler"]` inside trigger(), so an outer
     # middleware would never see which handler is about to run and could not honour
     # the gate exemptions (/start, privacy consent, forced-subscription check).
-    for observer in (dp.message, dp.callback_query, dp.edited_message, dp.inline_query):
+    for observer in (dp.message, dp.callback_query, dp.my_chat_member,
+                     dp.edited_message, dp.inline_query):
         observer.outer_middleware(ThrottlingMiddleware())
         observer.outer_middleware(DatabaseMiddleware())
         observer.middleware(UserContextMiddleware())

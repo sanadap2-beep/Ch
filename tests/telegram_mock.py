@@ -51,11 +51,12 @@ class MockedSession(BaseSession):
         self.member_status: str = "member"     # for getChatMember (forced-subscription gate)
         self.download_bytes: bytes = _jpeg()
         self.raise_for: dict[str, Exception] = {}   # method api-method name → exception
+        self.closed = False
         self._message_id = 1000
 
     # ── BaseSession API ──────────────────────────────────────────────────────
     async def close(self) -> None:
-        return None
+        self.closed = True
 
     async def make_request(self, bot: Bot, method: TelegramMethod[TelegramType], timeout: int | None = None) -> Any:
         self.calls.append(method)
@@ -263,6 +264,38 @@ def voice_update(
     return Update(update_id=update_id or int(uuid4().int % 10**8), message=message)
 
 
+def membership_update(
+    status: str,
+    *,
+    tg_id: int = 424242,
+    previous: str = "member",
+    chat_id: int | None = None,
+    update_id: int | None = None,
+) -> Update:
+    """A ``my_chat_member`` update — e.g. the user blocked ("kicked") or unblocked us."""
+    from aiogram.types import ChatMemberLeft, ChatMemberMember, ChatMemberRestricted, ChatMemberUpdated
+
+    chat_id = chat_id or tg_id
+    actor = TgUser(id=tg_id, is_bot=False, first_name="Tester")
+    chat = Chat(id=chat_id, type="private", first_name="Tester")
+
+    def member(state: str):
+        if state in {"kicked", "left"}:
+            return ChatMemberLeft(user=actor, status="left")
+        if state == "restricted":
+            return ChatMemberRestricted(user=actor, status="restricted", is_member=True,
+                                        can_send_messages=True)
+        return ChatMemberMember(user=actor, status="member")
+
+    return Update(
+        update_id=update_id or int(uuid4().int % 10**8),
+        my_chat_member=ChatMemberUpdated(
+            chat=chat, from_user=actor, date=dt.datetime.now(dt.UTC),
+            old_chat_member=member(previous), new_chat_member=member(status),
+        ),
+    )
+
+
 def build_test_dispatcher(bot: Bot) -> Dispatcher:
     """The production dispatcher (routers + middlewares), wired to the mock bot."""
     from app.bot import build_dispatcher
@@ -276,6 +309,7 @@ async def feed(dp: Dispatcher, bot: Bot, update: Update) -> Any:
 
 __all__ = [
     "MockedSession",
+    "membership_update",
     "make_bot",
     "text_update",
     "callback_update",

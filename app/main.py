@@ -19,13 +19,13 @@ from app.utils.logging import configure_logging
 
 logger = logging.getLogger(__name__)
 
+# Only request what the bot actually handles. Asking Telegram for update types with
+# no handler (edited_message, inline_query, chat_member) is wasted traffic, and
+# my_chat_member is what tells us a user blocked/unblocked the bot.
 ALLOWED_UPDATES = [
     "message",
-    "edited_message",
     "callback_query",
-    "inline_query",
     "my_chat_member",
-    "chat_member",
 ]
 
 

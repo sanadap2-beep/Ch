@@ -66,19 +66,12 @@ async def tg(session) -> SimpleNamespace:
     aiogram refuses to attach a router that already has a parent, so the shared
     application routers are detached again on teardown.
     """
-    from app.handlers import routers as app_routers
-
-    for application_router in app_routers:            # in case a previous test died
-        application_router._parent_router = None      # noqa: SLF001
-
     bot, api = make_bot()
     dp = build_test_dispatcher(bot)
     try:
         yield SimpleNamespace(bot=bot, api=api, dp=dp, session=session)
     finally:
         await bot.session.close()
-        for application_router in app_routers:
-            application_router._parent_router = None  # noqa: SLF001
 
 
 async def say(tg: SimpleNamespace, text: str, *, tg_id: int = USER_TG_ID) -> MockedSession:
@@ -823,6 +816,50 @@ async def test_admin_forced_channel_gate(tg: SimpleNamespace, user: User, admin_
     api = await tap(tg, ForcedCB(action="check").pack())
     person_text = api.all_text()
     assert "500" in person_text or person_text
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  blocking / unblocking the bot (my_chat_member)
+# ═══════════════════════════════════════════════════════════════════════════
+async def test_blocking_the_bot_pauses_reminders(tg: SimpleNamespace, user: User) -> None:
+    from tests.telegram_mock import membership_update
+
+    await tap(tg, SettingsCB(action="reminders").pack())          # make sure rules exist
+    rules = await _reminders(tg, USER_TG_ID)
+    assert rules and any(rule.enabled for rule in rules)
+
+    tg.api.clear()
+    await feed(tg.dp, tg.bot, membership_update("kicked", tg_id=USER_TG_ID))
+
+    person = await _fresh_user(tg, USER_TG_ID)
+    assert (person.preferences or {}).get("bot_blocked_at")
+    paused = (person.preferences or {}).get("bot_blocked_disabled")
+    assert paused, "we did not remember which reminders the block interrupted"
+
+    for rule in await _reminders(tg, USER_TG_ID):
+        assert rule.enabled is False
+        assert rule.next_run_at is None
+
+
+async def test_unblocking_restores_only_the_paused_reminders(tg: SimpleNamespace, user: User) -> None:
+    from tests.telegram_mock import membership_update
+
+    await tap(tg, SettingsCB(action="reminders").pack())
+    await tap(tg, ReminderCB(kind="water", action="toggle").pack())   # user turns water OFF
+    before = {rule.kind: rule.enabled for rule in await _reminders(tg, USER_TG_ID)}
+    assert before["water"] is False
+
+    await feed(tg.dp, tg.bot, membership_update("kicked", tg_id=USER_TG_ID))
+    await feed(tg.dp, tg.bot, membership_update("member", previous="kicked", tg_id=USER_TG_ID))
+
+    person = await _fresh_user(tg, USER_TG_ID)
+    assert not (person.preferences or {}).get("bot_blocked_at")
+
+    after = {rule.kind: rule.enabled for rule in await _reminders(tg, USER_TG_ID)}
+    assert after["water"] is False, "a reminder the user disabled was switched back on"
+    assert any(enabled for kind, enabled in after.items() if kind != "water")
+    armed = [rule for rule in await _reminders(tg, USER_TG_ID) if rule.enabled]
+    assert armed and all(rule.next_run_at is not None for rule in armed)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

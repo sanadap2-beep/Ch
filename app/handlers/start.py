@@ -6,10 +6,10 @@ import logging
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
 
 from app.config import settings
-from app.db.models import User
+from app.db.models import User, utcnow
 from app.handlers.callbacks import ForcedCB, MenuCB, PrivacyCB
 from app.i18n import lock_language, t
 from app.keyboards import (
@@ -84,6 +84,44 @@ async def cmd_start(
         return
 
     await show_menu_message(message, user, lang, services)
+
+
+@router.my_chat_member()
+async def bot_membership_changed(
+    update: ChatMemberUpdated, user: User, services: Services
+) -> None:
+    """React to the user blocking or unblocking the bot.
+
+    Blocking used to be discovered only lazily — a reminder or broadcast failing with
+    ``TelegramForbiddenError``. Knowing it the moment it happens lets us stop nagging
+    a user who left (spec extra §1) and re-arm cleanly when they come back, without
+    touching reminders they had switched off themselves.
+    """
+    status = update.new_chat_member.status
+    prefs = dict(user.preferences or {})
+
+    if status in {"kicked", "left"}:
+        disabled: list[str] = []
+        for rule in await services.reminders.rules(user):
+            if rule.enabled:
+                disabled.append(rule.kind)
+            rule.enabled = False
+            rule.next_run_at = None
+        prefs["bot_blocked_at"] = utcnow().isoformat()
+        prefs["bot_blocked_disabled"] = disabled
+        user.preferences = prefs
+        logger.info("user %s blocked the bot — %d reminders paused", user.tg_id, len(disabled))
+    elif status == "member" and prefs.get("bot_blocked_at"):
+        paused = set(prefs.pop("bot_blocked_disabled", []) or [])
+        prefs.pop("bot_blocked_at", None)
+        user.preferences = prefs
+        for rule in await services.reminders.rules(user):
+            if rule.kind in paused:
+                rule.enabled = True
+        await services.reminders.reschedule_all(user)
+        logger.info("user %s unblocked the bot — reminders re-armed", user.tg_id)
+
+    await services.repos.session.flush()
 
 
 @router.message(Command("help"))

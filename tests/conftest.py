@@ -228,6 +228,22 @@ async def _fake_web_search(self, query, *, include_domains=None, max_results=5, 
 
 
 @pytest.fixture(autouse=True)
+def _detach_application_routers():
+    """aiogram refuses to attach a router that already has a parent.
+
+    Tests build a fresh Dispatcher per test (so FSM state cannot leak), which means
+    the shared application routers must be detached again each time.
+    """
+    from app.handlers import routers
+
+    for application_router in routers:
+        application_router._parent_router = None      # noqa: SLF001
+    yield
+    for application_router in routers:
+        application_router._parent_router = None      # noqa: SLF001
+
+
+@pytest.fixture(autouse=True)
 def offline_ai(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every test runs against the canned AI, never the network."""
     monkeypatch.setattr(NanoGPTClient, "complete", _fake_complete)
