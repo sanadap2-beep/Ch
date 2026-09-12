@@ -65,8 +65,19 @@ jobs:
       - name: PostgreSQL is reachable
         run: python scripts/verify_schema.py --ping
 
+      # Actions logs are not always fetchable, so on failure the PostgreSQL error
+      # is re-emitted as a check annotation, which the API does return.
       - name: Alembic upgrade head
-        run: alembic upgrade head
+        run: |
+          set +e
+          out=$(alembic upgrade head 2>&1)
+          status=$?
+          echo "$out"
+          if [ "$status" -ne 0 ]; then
+            detail=$(echo "$out" | grep -E "Error|ERROR|Exception|DETAIL|HINT|LINE [0-9]" | tail -8 | tr '\n' ' ' | tr -d '\r' | cut -c1-800)
+            echo "::error title=alembic upgrade head failed::${detail:-exit $status with no matching error line}"
+            exit "$status"
+          fi
 
       - name: Schema has every expected table
         run: python scripts/verify_schema.py --expect 21
