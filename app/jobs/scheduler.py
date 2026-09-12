@@ -185,7 +185,16 @@ def start_scheduler() -> AsyncIOScheduler:
                       id="inactive-purge")
     scheduler.add_job(streak_check_job, CronTrigger(hour=0, minute=10), id="streak-reset")
 
-    scheduler.start()
+    try:
+        scheduler.start()
+    except RuntimeError as exc:
+        # AsyncIOScheduler binds to the running loop — it must be started from the
+        # async app lifespan, not from module import time or a sync entrypoint.
+        scheduler = None
+        raise RuntimeError(
+            "start_scheduler() must be called from a running asyncio loop "
+            "(e.g. inside the app lifespan in app/main.py)."
+        ) from exc
     runtime.scheduler = scheduler
     logger.info("scheduler started with %d jobs", len(scheduler.get_jobs()))
     return scheduler
