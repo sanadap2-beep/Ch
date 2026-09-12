@@ -65,17 +65,15 @@ jobs:
       - name: PostgreSQL is reachable
         run: python scripts/verify_schema.py --ping
 
-      # Actions logs are not always fetchable, so on failure the PostgreSQL error
-      # is re-emitted as a check annotation, which the API does return.
+      # Actions log blobs are not always fetchable, but check annotations are:
+      # every step that can fail pipes its output through scripts/ci_annotate.py.
       - name: Alembic upgrade head
         run: |
           set +e
-          out=$(alembic upgrade head 2>&1)
-          status=$?
-          echo "$out"
+          alembic upgrade head 2>&1 | tee /tmp/alembic.log
+          status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            detail=$(echo "$out" | grep -E "Error|ERROR|Exception|DETAIL|HINT|LINE [0-9]" | tail -8 | tr '\n' ' ' | tr -d '\r' | cut -c1-800)
-            echo "::error title=alembic upgrade head failed::${detail:-exit $status with no matching error line}"
+            python scripts/ci_annotate.py --file /tmp/alembic.log --title "alembic upgrade head"
             exit "$status"
           fi
 
@@ -86,10 +84,24 @@ jobs:
         run: alembic check
 
       - name: Every module imports and the dispatcher builds
-        run: ./scripts/run.sh --check
+        run: |
+          set +e
+          ./scripts/run.sh --check 2>&1 | tee /tmp/check.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            python scripts/ci_annotate.py --file /tmp/check.log --title "run.sh --check"
+            exit "$status"
+          fi
 
       - name: Pytest (offline — no network, no secrets needed)
-        run: pytest -q --maxfail=5
+        run: |
+          set +e
+          pytest -q --maxfail=5 2>&1 | tee /tmp/pytest.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            python scripts/ci_annotate.py --file /tmp/pytest.log --title pytest --lines 120
+            exit "$status"
+          fi
 
       - name: Config, docs and dependency drift guards
         run: pytest tests/test_config_docs.py tests/test_dependencies.py -q
