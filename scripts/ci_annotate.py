@@ -18,7 +18,7 @@ import argparse
 import pathlib
 import sys
 
-MAX_MESSAGE = 900  # stay well under the annotation limit
+MAX_MESSAGE = 1400  # stay well under the annotation limit
 
 
 def escape(text: str) -> str:
@@ -52,13 +52,15 @@ def main() -> int:
                                  "File \"", "DETAIL", "HINT", "LINE ", "sqlalchemy",
                                  "alembic", "asyncpg", "[SQL", "[parameters"))
     ]
-    payload = interesting or lines
+    payload = (interesting or lines)[-args.lines:]
 
-    parts = chunks(payload, args.chunk)
+    # Emit the tail first: the last traceback frame is the one that names the
+    # failing line, and a single annotation is truncated by the UI.
+    parts = list(reversed(chunks(payload, args.chunk)))
     total = len(parts)
     for index, part in enumerate(parts, start=1):
         message = "\n".join(part)[:MAX_MESSAGE]
-        title = f"{args.title} ({index}/{total})" if total > 1 else args.title
+        title = f"{args.title} [{index}/{total} tail-first]" if total > 1 else args.title
         print(f"::{args.level} title={escape(title)}::{escape(message)}")
     return 0
 
