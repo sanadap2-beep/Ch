@@ -81,8 +81,12 @@ class Services:
         )
 
     # broadcast owns its own sessions (it outlives a single update)
-    def broadcaster(self, bot: Bot | None = None) -> BroadcastService:
-        return BroadcastService(bot or self.bot)  # type: ignore[arg-type]
+    def broadcaster(self, bot: Bot | None = None, *, own_session: bool = False) -> BroadcastService:
+        """Share this container's session unless the caller needs an independent one."""
+        return BroadcastService(
+            bot or self.bot,                                    # type: ignore[arg-type]
+            None if own_session else self.repos,
+        )
 
     async def close(self) -> None:
         await self.videos.aclose()

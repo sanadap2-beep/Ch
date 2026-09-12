@@ -599,6 +599,18 @@ def detect_language(code: str | None) -> str:
     return Language.EN.value if code.lower().startswith("en") else Language.AR.value
 
 
+def lock_language(user: Any) -> None:
+    """Remember that the user picked a language explicitly.
+
+    ``UserRepository.sync_telegram_profile`` mirrors the Telegram client locale onto
+    the profile on every update; without this flag an explicit AR/EN choice made in
+    ⚙️ Settings (or via ``/lang``) would be silently reverted on the next message.
+    """
+    prefs = dict(getattr(user, "preferences", None) or {})
+    prefs["language_locked"] = True
+    user.preferences = prefs
+
+
 def localize_number(value: float | int, lang: str = "ar") -> str:
     """Western digits are the convention in technical Arabic UIs — keep them."""
     if isinstance(value, float):

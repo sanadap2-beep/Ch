@@ -11,7 +11,7 @@ from aiogram.types import CallbackQuery, Message
 from app.config import settings
 from app.db.models import User
 from app.handlers.callbacks import ForcedCB, MenuCB, PrivacyCB
-from app.i18n import t
+from app.i18n import lock_language, t
 from app.keyboards import (
     forced_subscription,
     main_menu,
@@ -39,6 +39,11 @@ def is_admin(tg_id: int) -> bool:
 # ═══════════════════════════════════════════════════════════════════════════
 #  /start
 # ═══════════════════════════════════════════════════════════════════════════
+# Two registrations on purpose: in aiogram 3 ``CommandStart(deep_link=True)`` matches
+# ONLY "/start <payload>", so a bare "/start" needs its own filter. Without the first
+# decorator the bot's main entry point would never fire and every new user would fall
+# through to the unknown-command handler.
+@router.message(CommandStart())
 @router.message(CommandStart(deep_link=True))
 async def cmd_start(
     message: Message,
@@ -105,6 +110,7 @@ async def cmd_cancel(message: Message, lang: str, state: FSMContext) -> None:
 async def cmd_lang(message: Message, user: User, services: Services) -> None:
     new_lang = "en" if (user.language_code or "ar").startswith("ar") else "ar"
     user.language_code = new_lang
+    lock_language(user)
     await services.repos.session.flush()
     await message.answer(
         t(new_lang, "lang.changed"),

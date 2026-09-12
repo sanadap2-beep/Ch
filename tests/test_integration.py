@@ -389,6 +389,7 @@ async def test_broadcast_reaches_the_chosen_audience(services, user, coach_user,
         admin_tg_id=1, text="📢 رسالة تجريبية", audience="all"
     )
     assert total >= 1
+    await session.commit()                     # delivery runs in its own session
     result = await broadcaster.run(broadcast_id)
     assert result["sent"] == total and result["failed"] == 0
     assert len(bot.sent) == total
@@ -403,6 +404,7 @@ async def test_broadcast_counts_blocked_users_as_failed(services, user, session)
     bot = FakeBot(blocked={user.tg_id})
     broadcaster = services.broadcaster(bot)
     broadcast_id, _total = await broadcaster.create(admin_tg_id=1, text="مرحبا", audience="all")
+    await session.commit()                     # delivery runs in its own session
     result = await broadcaster.run(broadcast_id)
     assert result["failed"] >= 1
     assert result["sent"] + result["failed"] >= 1
@@ -424,6 +426,7 @@ async def test_scheduled_broadcasts_are_picked_up_by_the_job(services, user, ses
         admin_tg_id=1, text="مجدولة", audience="all",
         scheduled_for=datetime.now(UTC) - timedelta(minutes=1),
     )
+    await session.commit()                     # the job opens its own session
     assert await broadcaster.run_pending() >= 1
     assert bot.sent
     history = await broadcaster.history(limit=1)

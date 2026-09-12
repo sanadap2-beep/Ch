@@ -37,10 +37,37 @@ def _engine_kwargs() -> dict[str, Any]:
     return kwargs
 
 
+def _apply_sqlite_pragmas(engine: AsyncEngine) -> None:
+    """Make the SQLite dev/test path behave under concurrency.
+
+    * ``journal_mode=WAL`` — readers no longer block writers, which matters because
+      long-running services (broadcasts, reminders, subscription renewals) open their
+      own session while a request-scoped session is still active. With the default
+      rollback journal those writers stall and fail with "database is locked".
+    * ``busy_timeout`` — wait instead of failing instantly on a contended lock.
+    * ``foreign_keys=ON`` — SQLite ignores FK constraints (and ``ON DELETE CASCADE``)
+      unless this is set per connection.
+    """
+    from sqlalchemy import event
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _on_connect(dbapi_connection: Any, _record: Any) -> None:  # pragma: no cover - driver hook
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=15000")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+
+
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
         _engine = create_async_engine(settings.database_url, **_engine_kwargs())
+        if not settings.uses_postgres:
+            _apply_sqlite_pragmas(_engine)
         logger.info("DB engine created for %s", settings.database_url.split("@")[-1])
     return _engine
 

@@ -177,7 +177,12 @@ class UserRepository:
     async def sync_telegram_profile(self, user: User, data: dict[str, Any]) -> bool:
         """Keep username/names in sync with Telegram. Returns True if changed."""
         changed = False
+        # A language the user picked in ⚙️ Settings wins over their Telegram client
+        # locale — otherwise the choice would be reverted on the very next message.
+        locked = bool((user.preferences or {}).get("language_locked"))
         for field in ("username", "first_name", "last_name", "language_code"):
+            if field == "language_code" and locked:
+                continue
             new = data.get(field)
             if new is not None and getattr(user, field) != new:
                 setattr(user, field, new)

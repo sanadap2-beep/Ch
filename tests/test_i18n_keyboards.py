@@ -6,6 +6,7 @@ codebase is verified against :data:`app.i18n.STRINGS`.
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -84,6 +85,22 @@ def test_main_menu_labels_match_the_handler_shortcuts() -> None:
     assert admin_labels & admin_handler.ADMIN_LABELS
 
 
+def _sample_rules() -> list:
+    """Stand-in ReminderRule rows so the reminders keyboard is built with real data."""
+    from types import SimpleNamespace
+
+    from app.constants import ReminderKind
+
+    return [
+        SimpleNamespace(kind=ReminderKind.WATER.value, enabled=True, interval_minutes=90,
+                        hour=None, minute=0, days_of_week=[]),
+        SimpleNamespace(kind=ReminderKind.WORKOUT.value, enabled=False, interval_minutes=None,
+                        hour=18, minute=30, days_of_week=[0, 2, 4]),
+        SimpleNamespace(kind=ReminderKind.WEIGH_IN.value, enabled=True, interval_minutes=None,
+                        hour=7, minute=0, days_of_week=[6]),
+    ]
+
+
 @pytest.mark.parametrize("lang", ["ar", "en"])
 def test_every_keyboard_builds_in_both_languages(lang: str, user=None) -> None:  # noqa: ANN001
     builders = {
@@ -95,7 +112,7 @@ def test_every_keyboard_builds_in_both_languages(lang: str, user=None) -> None: 
         "confirm_deletion": lambda: kb.confirm_deletion(lang),
         "privacy_consent": lambda: kb.privacy_consent(lang),
         "forced_subscription": lambda: kb.forced_subscription(["@chan"], lang),
-        "consult_menu": lambda: kb.consult_menu(lang, ["سؤال؟"]),
+        "consult_menu": lambda: kb.consult_menu(lang, kb.consult_examples(lang)),
         "coach_menu": lambda: kb.coach_menu(lang, unlocked=True, balance=120, today_done=False),
         "scan_menu": lambda: kb.scan_menu(lang, free_left=2, balance=120),
         "progress_menu": lambda: kb.progress_menu(lang),
@@ -105,7 +122,7 @@ def test_every_keyboard_builds_in_both_languages(lang: str, user=None) -> None: 
         "ledger_pager": lambda: kb.ledger_pager(lang, page=1, has_more=True),
         "referral_menu": lambda: kb.referral_menu(lang),
         "settings_menu": lambda: kb.settings_menu(lang, tz="Asia/Damascus"),
-        "reminders_menu": lambda: kb.reminders_menu(lang, []),
+        "reminders_menu": lambda: kb.reminders_menu(lang, _sample_rules()),
         "admin_menu": lambda: kb.admin_menu(lang),
         "admin_users_pager": lambda: kb.admin_users_pager(lang, page=1, total_pages=3),
         "admin_user_card": lambda: kb.admin_user_card(lang, "00000000-0000-0000-0000-000000000000",
@@ -127,6 +144,17 @@ def test_every_keyboard_builds_in_both_languages(lang: str, user=None) -> None: 
         assert isinstance(markup, (InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove)), name
         if isinstance(markup, InlineKeyboardMarkup):
             assert markup.inline_keyboard, f"{name} produced no buttons"
+            for row in markup.inline_keyboard:
+                for button in row:
+                    payload = button.callback_data
+                    if payload is None:
+                        continue
+                    size = len(str(payload).encode())
+                    assert size <= 64, (
+                        f"{name}: button {button.text!r} carries {size} bytes of callback_data "
+                        f"({payload!r}) — Telegram rejects anything over 64"
+                    )
+                    assert button.text and button.text.strip(), f"{name}: empty button label"
 
 
 @pytest.mark.parametrize("lang", ["ar", "en"])
@@ -182,3 +210,93 @@ def test_callback_payload_fits_telegrams_64_byte_limit() -> None:
     worst = AdminUserCB(action="profile", user_id="00000000-0000-0000-0000-000000000000",
                         arg="x" * 12, page=99).pack()
     assert len(worst.encode()) <= 64, f"{worst!r} is {len(worst.encode())} bytes"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  static guards for keyboard bug classes that only surface at send time
+# ═══════════════════════════════════════════════════════════════════════════
+def _app_modules() -> list[Path]:
+    return sorted(Path("app").rglob("*.py"))
+
+
+def _builder_returning_functions(tree: ast.Module) -> set[str]:
+    """Names of local functions annotated as returning a bare keyboard *builder*."""
+    builders: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        returns = ast.unparse(node.returns) if node.returns else ""
+        if returns.endswith("InlineKeyboardBuilder") or returns.endswith("KeyboardBuilder"):
+            builders.add(node.name)
+    return builders
+
+
+def test_no_bare_keyboard_builder_is_passed_as_reply_markup() -> None:
+    """Telegram validates reply_markup against concrete markup types.
+
+    Passing an ``InlineKeyboardBuilder`` (forgetting ``.as_markup()``) raises a
+    pydantic ValidationError when the message is sent — which is how the onboarding
+    injury step used to break, leaving sign-up impossible to complete.
+    """
+    offenders: list[str] = []
+    for path in _app_modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        local_builders = _builder_returning_functions(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for keyword in node.keywords:
+                if keyword.arg != "reply_markup":
+                    continue
+                value = keyword.value
+                if isinstance(value, ast.Call):
+                    name = ast.unparse(value.func)
+                    if name.endswith(".as_markup"):
+                        continue
+                    if name.split(".")[-1] in local_builders:
+                        offenders.append(f"{path}:{node.lineno} reply_markup={name}(...)")
+    assert not offenders, "bare builder passed as reply_markup:\n" + "\n".join(offenders)
+
+
+def test_keyboard_builders_are_annotated_as_markup() -> None:
+    """A helper that builds buttons should hand back a markup, not a builder."""
+    suspicious: list[str] = []
+    for path in _app_modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            returns = ast.unparse(node.returns) if node.returns else ""
+            if returns.endswith("KeyboardBuilder"):
+                suspicious.append(f"{path}:{node.lineno} {node.name}() -> {returns}")
+    assert not suspicious, "functions still typed as returning a builder:\n" + "\n".join(suspicious)
+
+
+def test_callback_data_arguments_are_short_and_ascii_safe() -> None:
+    """Callback payloads must stay under Telegram's 64-byte cap.
+
+    Arabic text is ~2 bytes per character, so packing a whole sentence into a
+    button (as the consultation examples used to do) blows the limit and crashes
+    the entire keyboard render.
+    """
+    offenders: list[str] = []
+    for path in _app_modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = ast.unparse(node.func)
+            if not re.search(r"\b[A-Z]\w*CB$", func):
+                continue
+            for keyword in node.keywords:
+                if keyword.arg not in {"arg", "value", "kind", "action"}:
+                    continue
+                if not isinstance(keyword.value, ast.Constant) or not isinstance(keyword.value.value, str):
+                    continue
+                size = len(keyword.value.value.encode())
+                if size > 24:
+                    offenders.append(
+                        f"{path}:{node.lineno} {func}({keyword.arg}={keyword.value.value!r}) "
+                        f"is {size} bytes"
+                    )
+    assert not offenders, "long literal in callback data:\n" + "\n".join(offenders)

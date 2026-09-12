@@ -143,9 +143,10 @@ async def cfg_models(callback: CallbackQuery, lang: str, services: Services, is_
         await callback.answer("⛔", show_alert=True)
         return
     ar = lang.startswith("ar")
-    await ai_router.load_overrides(force=True)
+    live_router = services.ai.router
+    await live_router.load_overrides(force=True)
     lines = [f"<b>🧩 {'توزيع الموديلات الحي' if ar else 'Live model routing'}</b>"]
-    for task, models in ai_router.describe().items():
+    for task, models in live_router.describe().items():
         chain = " → ".join(f"<code>{escape_html(m)}</code>" for m in models)
         price_in, price_out = settings.price_of(models[0]) if models else (0.0, 0.0)
         lines.append(f"• {task}: {chain}\n   ${price_in}/M "
@@ -280,7 +281,7 @@ async def set_route(message: Message, user: User, lang: str, services: Services,
         current = {}
     current[task] = models
     await services.repos.settings.set(ai_router.ROUTING_KEY, current, updated_by=user.tg_id)
-    ai_router.set_override(task, models)
+    services.ai.router.set_override(task, models)
     ai_router.invalidate_cache()
     await services.repos.audit.log(user.tg_id, AdminActionEnum.CONFIG_CHANGE.value,
                                    payload={"model_routing": {task: models}})
@@ -324,13 +325,13 @@ def _users_keyboard(lang: str, people: Sequence[User], page: int, total_pages: i
 
 @router.callback_query(AdminCB.filter(F.action.in_({"users", "users_goal"})))
 async def users_list(
-    callback: CallbackQuery, cb: AdminCB, lang: str, services: Services, is_admin: bool = False
+    callback: CallbackQuery, callback_data: AdminCB, lang: str, services: Services, is_admin: bool = False
 ) -> None:
     if not is_admin:
         await callback.answer("⛔", show_alert=True)
         return
-    page = max(1, cb.page or 1)
-    goal = cb.arg if cb.action == "users_goal" and cb.arg else None
+    page = max(1, callback_data.page or 1)
+    goal = callback_data.arg if callback_data.action == "users_goal" and callback_data.arg else None
     people, total = await services.repos.users.paginate(page=page, per_page=PER_PAGE, goal=goal)
     total_pages = max(1, -(-total // PER_PAGE))
     ar = lang.startswith("ar")
@@ -400,12 +401,12 @@ async def _load_person(services: Services, raw_id: str) -> User | None:
 
 @router.callback_query(AdminUserCB.filter(F.action.in_({"profile", "open"})))
 async def open_user(
-    callback: CallbackQuery, cb: AdminUserCB, lang: str, services: Services, is_admin: bool = False
+    callback: CallbackQuery, callback_data: AdminUserCB, lang: str, services: Services, is_admin: bool = False
 ) -> None:
     if not is_admin:
         await callback.answer("⛔", show_alert=True)
         return
-    person = await _load_person(services, cb.user_id)
+    person = await _load_person(services, callback_data.user_id)
     if person is None:
         await callback.answer("❌", show_alert=True)
         return
@@ -440,17 +441,17 @@ async def open_user(
 
 @router.callback_query(AdminUserCB.filter(F.action.in_({"ban", "unban"})))
 async def toggle_ban(
-    callback: CallbackQuery, cb: AdminUserCB, lang: str, services: Services, is_admin: bool = False
+    callback: CallbackQuery, callback_data: AdminUserCB, lang: str, services: Services, is_admin: bool = False
 ) -> None:
     if not is_admin:
         await callback.answer("⛔", show_alert=True)
         return
-    person = await _load_person(services, cb.user_id)
+    person = await _load_person(services, callback_data.user_id)
     if person is None:
         await callback.answer("❌", show_alert=True)
         return
-    banned = cb.action == "ban"
-    reason = cb.arg or None
+    banned = callback_data.action == "ban"
+    reason = callback_data.arg or None
     await services.repos.users.set_ban(person, banned=banned, reason=reason)
     await services.repos.audit.log(
         callback.from_user.id,
@@ -458,18 +459,18 @@ async def toggle_ban(
         target_user_id=person.id, payload={"reason": reason},
     )
     await callback.answer(t(lang, "adm.banned") if banned else t(lang, "adm.unbanned"))
-    await open_user(callback, cb, lang, services, is_admin)
+    await open_user(callback, callback_data, lang, services, is_admin)
 
 
 @router.callback_query(AdminUserCB.filter(F.action.in_({"grant", "deduct"})))
 async def points_prompt(
-    callback: CallbackQuery, cb: AdminUserCB, lang: str, state: FSMContext, is_admin: bool = False
+    callback: CallbackQuery, callback_data: AdminUserCB, lang: str, state: FSMContext, is_admin: bool = False
 ) -> None:
     if not is_admin:
         await callback.answer("⛔", show_alert=True)
         return
     await state.set_state(AdminFlow.amount)
-    await state.update_data(target_user=cb.user_id, direction=cb.action)
+    await state.update_data(target_user=callback_data.user_id, direction=callback_data.action)
     await callback.answer()
     await callback.message.answer(
         t(lang, "adm.amount_ask") + "\n<code>500 "
@@ -528,16 +529,16 @@ def sign_of(direction: str) -> str:
 
 @router.callback_query(AdminUserCB.filter(F.action == "sub"))
 async def grant_subscription(
-    callback: CallbackQuery, cb: AdminUserCB, lang: str, services: Services, is_admin: bool = False
+    callback: CallbackQuery, callback_data: AdminUserCB, lang: str, services: Services, is_admin: bool = False
 ) -> None:
     if not is_admin:
         await callback.answer("⛔", show_alert=True)
         return
-    person = await _load_person(services, cb.user_id)
+    person = await _load_person(services, callback_data.user_id)
     if person is None:
         await callback.answer("❌", show_alert=True)
         return
-    plan = cb.arg if cb.arg in {p.value for p in SubscriptionPlan} else SubscriptionPlan.MONTHLY.value
+    plan = callback_data.arg if callback_data.arg in {p.value for p in SubscriptionPlan} else SubscriptionPlan.MONTHLY.value
     charge = await services.subscription.activate(person, plan, admin_tg_id=callback.from_user.id)
     await services.repos.audit.log(callback.from_user.id, AdminActionEnum.SET_SUBSCRIPTION.value,
                                    target_user_id=person.id, payload={"plan": plan})
@@ -549,17 +550,17 @@ async def grant_subscription(
         f"{subscription_label(plan, lang)}"
         + (f" (+{charge.points} {'نقطة' if lang.startswith('ar') else 'points'})" if charge else ""),
     )
-    await open_user(callback, cb, lang, services, is_admin)
+    await open_user(callback, callback_data, lang, services, is_admin)
 
 
 @router.callback_query(AdminUserCB.filter(F.action == "usage"))
 async def user_usage(
-    callback: CallbackQuery, cb: AdminUserCB, lang: str, services: Services, is_admin: bool = False
+    callback: CallbackQuery, callback_data: AdminUserCB, lang: str, services: Services, is_admin: bool = False
 ) -> None:
     if not is_admin:
         await callback.answer("⛔", show_alert=True)
         return
-    person = await _load_person(services, cb.user_id)
+    person = await _load_person(services, callback_data.user_id)
     if person is None:
         await callback.answer("❌", show_alert=True)
         return
@@ -584,17 +585,17 @@ async def user_usage(
 
 @router.callback_query(AdminUserCB.filter(F.action == "ledger"))
 async def user_ledger(
-    callback: CallbackQuery, cb: AdminUserCB, lang: str, services: Services, is_admin: bool = False
+    callback: CallbackQuery, callback_data: AdminUserCB, lang: str, services: Services, is_admin: bool = False
 ) -> None:
     if not is_admin:
         await callback.answer("⛔", show_alert=True)
         return
-    person = await _load_person(services, cb.user_id)
+    person = await _load_person(services, callback_data.user_id)
     if person is None:
         await callback.answer("❌", show_alert=True)
         return
     ar = lang.startswith("ar")
-    page = max(0, cb.page)
+    page = max(0, callback_data.page)
     entries = await services.repos.economy.ledger(person.id, limit=PER_PAGE, offset=page * PER_PAGE)
     total = await services.repos.economy.ledger_count(person.id)
     lines = [f"<b>📒 {escape_html(person.full_name)} — {'سجل نقاطه' if ar else 'ledger'} ({total})</b>"]
@@ -609,15 +610,15 @@ async def user_ledger(
     builder = InlineKeyboardBuilder()
     if page > 0:
         builder.row(InlineKeyboardButton(text="⬅️", callback_data=AdminUserCB(
-            action="ledger", user_id=cb.user_id, page=page - 1).pack()))
+            action="ledger", user_id=callback_data.user_id, page=page - 1).pack()))
     builder.row(InlineKeyboardButton(text=f"{page + 1}/{max(1, -(-total // PER_PAGE))}",
-                                     callback_data=AdminUserCB(action="ledger", user_id=cb.user_id,
+                                     callback_data=AdminUserCB(action="ledger", user_id=callback_data.user_id,
                                                                page=page).pack()))
     if (page + 1) * PER_PAGE < total:
         builder.row(InlineKeyboardButton(text="➡️", callback_data=AdminUserCB(
-            action="ledger", user_id=cb.user_id, page=page + 1).pack()))
+            action="ledger", user_id=callback_data.user_id, page=page + 1).pack()))
     builder.row(InlineKeyboardButton(text=t(lang, "adm.view_profile"), callback_data=AdminUserCB(
-        action="profile", user_id=cb.user_id).pack()))
+        action="profile", user_id=callback_data.user_id).pack()))
     await edit_or_send(callback, "\n".join(lines), reply_markup=builder.as_markup())
 
 
@@ -661,14 +662,14 @@ async def broadcast_text(
 
 @router.callback_query(AdminCB.filter(F.action == "bc_set"))
 async def broadcast_audience(
-    callback: CallbackQuery, cb: AdminCB, lang: str, services: Services, state: FSMContext,
+    callback: CallbackQuery, callback_data: AdminCB, lang: str, services: Services, state: FSMContext,
     is_admin: bool = False,
 ) -> None:
     if not is_admin:
         await callback.answer("⛔", show_alert=True)
         return
     data = await state.get_data()
-    audience = cb.arg if cb.arg in AUDIENCES else "all"
+    audience = callback_data.arg if callback_data.arg in AUDIENCES else "all"
     text = data.get("bc_text")
     if not text:
         await state.clear()

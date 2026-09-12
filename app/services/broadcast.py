@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -27,10 +29,26 @@ logger = logging.getLogger(__name__)
 
 
 class BroadcastService:
-    """Owns its sessions: a broadcast outlives a single Telegram update."""
+    """Owns its sessions for delivery; creation can ride on the caller's session.
 
-    def __init__(self, bot: Bot) -> None:
+    ``run``/``run_pending`` outlive a single Telegram update, so they open their own
+    session. ``create`` is a short write that the admin handler already has a
+    transaction for — reusing it keeps creation atomic with the request and avoids a
+    second concurrent writer (which SQLite serialises into "database is locked").
+    """
+
+    def __init__(self, bot: Bot, repos: Repos | None = None) -> None:
         self.bot = bot
+        self.repos = repos
+
+    @asynccontextmanager
+    async def _session(self) -> AsyncIterator[Repos]:
+        """The caller's repositories when given, otherwise a dedicated session."""
+        if self.repos is not None:
+            yield self.repos
+            return
+        async with session_scope() as session:
+            yield Repos(session)
 
     # ── creation ─────────────────────────────────────────────────────────────
     async def create(
@@ -42,8 +60,7 @@ class BroadcastService:
         audience: str = "all",
         scheduled_for: datetime | None = None,
     ) -> tuple[uuid.UUID, int]:
-        async with session_scope() as session:
-            repos = Repos(session)
+        async with self._session() as repos:
             recipients = await repos.users.broadcast_audience(audience)
             broadcast = await repos.broadcasts.create(
                 admin_tg_id,

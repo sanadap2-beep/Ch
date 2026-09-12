@@ -12,7 +12,7 @@ from app.constants import ActivityLevel, BudgetLevel, Equipment, FoodStyle, Goal
 from app.db.models import User
 from app.handlers.callbacks import MenuCB, PrivacyCB, ReminderCB, SettingsCB
 from app.handlers.states import ProfileEdit, ReminderFlow
-from app.i18n import t
+from app.i18n import lock_language, t
 from app.keyboards import (
     ACTIVITY_LABELS,
     BUDGET_LABELS,
@@ -138,8 +138,9 @@ async def language_panel(callback: CallbackQuery, lang: str) -> None:
 
 
 @router.callback_query(SettingsCB.filter(F.action == "lang"))
-async def language_set(callback: CallbackQuery, cb: SettingsCB, user: User, services: Services) -> None:
-    user.language_code = cb.arg if cb.arg in {"ar", "en"} else "ar"
+async def language_set(callback: CallbackQuery, callback_data: SettingsCB, user: User, services: Services) -> None:
+    user.language_code = callback_data.arg if callback_data.arg in {"ar", "en"} else "ar"
+    lock_language(user)
     await services.repos.session.flush()
     lang = user.language_code
     await callback.answer(t(lang, "lang.changed"))
@@ -170,8 +171,8 @@ FIELD_PROMPTS = {
 
 
 @router.callback_query(SettingsCB.filter(F.action == "field"))
-async def field_prompt(callback: CallbackQuery, cb: SettingsCB, lang: str, state: FSMContext) -> None:
-    field = cb.arg
+async def field_prompt(callback: CallbackQuery, callback_data: SettingsCB, lang: str, state: FSMContext) -> None:
+    field = callback_data.arg
     if field not in FIELD_KEYS:
         await callback.answer()
         return
@@ -379,11 +380,15 @@ async def reminders_panel(callback: CallbackQuery, user: User, lang: str, servic
 
 @router.callback_query(ReminderCB.filter(F.action == "toggle"))
 async def toggle_reminder(
-    callback: CallbackQuery, cb: ReminderCB, user: User, lang: str, services: Services
+    callback: CallbackQuery, callback_data: ReminderCB, user: User, lang: str, services: Services
 ) -> None:
-    rule = await services.reminders.toggle(user, cb.kind)
+    rule = await services.reminders.toggle(user, callback_data.kind)
     label = kind_label(rule.kind, lang)
-    when = rule.next_run_at.strftime("%H:%M") if rule.next_run_at else (rule.time_of_day or "—")
+    when = (
+        rule.next_run_at.strftime("%H:%M")
+        if rule.next_run_at
+        else (f"{rule.hour:02d}:{rule.minute:02d}" if rule.hour is not None else "—")
+    )
     await callback.answer(t(lang, "rem.on", kind=label, time=when) if rule.enabled
                           else t(lang, "rem.off", kind=label))
     await reminders_panel(callback, user, lang, services)
@@ -391,10 +396,10 @@ async def toggle_reminder(
 
 @router.callback_query(ReminderCB.filter(F.action == "interval"))
 async def reminder_interval(
-    callback: CallbackQuery, cb: ReminderCB, user: User, lang: str, services: Services
+    callback: CallbackQuery, callback_data: ReminderCB, user: User, lang: str, services: Services
 ) -> None:
-    minutes = validators.parse_int(cb.arg, min_value=30, max_value=720) or app_settings.water_reminder_interval_min
-    rule = await services.reminders.upsert(user, cb.kind, enabled=True, interval_minutes=minutes)
+    minutes = validators.parse_int(callback_data.arg, min_value=30, max_value=720) or app_settings.water_reminder_interval_min
+    rule = await services.reminders.upsert(user, callback_data.kind, enabled=True, interval_minutes=minutes)
     rule.next_run_at = None
     await services.reminders.reschedule_all(user)
     await callback.answer(t(lang, "set.saved"))
@@ -402,9 +407,9 @@ async def reminder_interval(
 
 
 @router.callback_query(ReminderCB.filter(F.action == "time"))
-async def reminder_time_prompt(callback: CallbackQuery, cb: ReminderCB, lang: str, state: FSMContext) -> None:
+async def reminder_time_prompt(callback: CallbackQuery, callback_data: ReminderCB, lang: str, state: FSMContext) -> None:
     await state.set_state(ReminderFlow.time)
-    await state.update_data(kind=cb.kind)
+    await state.update_data(kind=callback_data.kind)
     await callback.answer()
     ar = lang.startswith("ar")
     await callback.message.answer("اكتب الوقت الجديد (مثال: <code>14:30</code>):" if ar

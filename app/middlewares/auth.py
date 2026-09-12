@@ -134,10 +134,10 @@ class UserContextMiddleware(BaseMiddleware):
         data["is_new_user"] = created
         data["is_admin"] = from_user.id in settings.admin_ids
 
-        handler_name = getattr(getattr(data.get("handler"), "callback", None), "__name__", "") or ""
+        exempt = _is_exempt(event, data)
 
         # ── gate 1: ban ──────────────────────────────────────────────────────
-        if user.is_banned and handler_name not in GATE_EXEMPT_HANDLERS:
+        if user.is_banned and not exempt:
             await _reply_gate(
                 event,
                 t(lang, "banned.body",
@@ -149,7 +149,7 @@ class UserContextMiddleware(BaseMiddleware):
 
         # ── gate 2: forced channel subscription ──────────────────────────────
         channels = await _forced_channels(services)
-        if channels and handler_name not in GATE_EXEMPT_HANDLERS:
+        if channels and not exempt:
             subscribed = await _check_channels(data.get("bot"), from_user.id, channels)
             if not subscribed:
                 text = t(lang, "forced.body", channels="\n".join(f"• {c}" for c in channels))
@@ -161,7 +161,7 @@ class UserContextMiddleware(BaseMiddleware):
 
         # ── gate 3: privacy consent ──────────────────────────────────────────
         privacy = PrivacyService(repos)
-        if privacy.needs_consent(user) and handler_name not in GATE_EXEMPT_HANDLERS:
+        if privacy.needs_consent(user) and not exempt:
             text = t(lang, "privacy.ask") + "\n\n" + t(lang, "privacy.body", retention=settings.keep_food_photos_days)
             if isinstance(event, CallbackQuery):
                 await event.answer(t(lang, "privacy.ask"), show_alert=True)
@@ -175,6 +175,36 @@ class UserContextMiddleware(BaseMiddleware):
 # ═══════════════════════════════════════════════════════════════════════════
 #  helpers
 # ═══════════════════════════════════════════════════════════════════════════
+# Callback prefixes that must stay reachable while a gate is active, so the user
+# can always satisfy the gate instead of being locked out of the bot.
+GATE_EXEMPT_CALLBACK_PREFIXES = ("prv:", "fsub:")
+
+
+def _is_exempt(event: TelegramObject, data: dict[str, Any]) -> bool:
+    """True when this update must bypass the ban/channel/consent gates.
+
+    Two independent checks, because either can be unavailable:
+
+    * the resolved handler name (only present when this middleware runs as an
+      *inner* middleware — aiogram sets ``data["handler"]`` inside ``trigger()``);
+    * the shape of the update itself (``/start`` and the consent/subscription
+      buttons), which works no matter where the middleware is mounted.
+    """
+    handler_name = getattr(getattr(data.get("handler"), "callback", None), "__name__", "") or ""
+    if handler_name in GATE_EXEMPT_HANDLERS:
+        return True
+
+    if isinstance(event, CallbackQuery):
+        payload = str(event.data or "")
+        return payload.startswith(GATE_EXEMPT_CALLBACK_PREFIXES)
+
+    if isinstance(event, Message):
+        text = (event.text or "").strip()
+        return text.startswith("/start")
+
+    return False
+
+
 def _lang_of(from_user: TgUser) -> str:
     code = (from_user.language_code or "ar").lower()
     return "en" if code.startswith("en") else "ar"
@@ -234,5 +264,6 @@ __all__ = [
     "ThrottlingMiddleware",
     "UserContextMiddleware",
     "GATE_EXEMPT_HANDLERS",
+    "GATE_EXEMPT_CALLBACK_PREFIXES",
     "HandlerObject",
 ]

@@ -160,4 +160,29 @@ reminders, safety, i18n, privacy, admin, webhook. Anything the product team may 
   same repositories (types are portable: `JSONType`, `Uuid`, TZ `DateTime`).
 * **FakeBot** implements only what the services use (`send_message`, `send_photo`, `get_me`,
   `answer_callback_query`), so broadcast/reminder tests run for real against it.
-* 196 tests across 8 files — see `README.md#-التقنيات-والجودة`.
+* **Handler layer**: `tests/telegram_mock.py` provides a `MockedSession(BaseSession)` that records
+  every Bot API call and answers with valid objects (including bot-mounted messages, so
+  `status.edit_text()` chains work). `tests/test_handlers.py` feeds genuine `Update` objects
+  through the *production* dispatcher — middlewares, gates, FSM and all 152 handlers included.
+* **Static guards** (`test_i18n_keyboards.py`) walk the AST of `app/` for two bug classes that
+  only explode at send time: a bare `InlineKeyboardBuilder` passed as `reply_markup`, and long
+  literals packed into callback data (Telegram's cap is 64 bytes; Arabic is ~2 bytes/char).
+* 276 tests across 8 files — see the coverage table in `README.md`.
+
+### Bugs this layer caught (all fixed)
+
+| Bug | Impact |
+|---|---|
+| `CommandStart(deep_link=True)` only matches `/start <payload>` | `/start` never reached its handler — new users got the "unknown command" list |
+| Gate exemptions read `data["handler"]` from an *outer* middleware | aiogram sets that key only inside `trigger()`, so the consent gate blocked `/start` **and** the "accept" button → new users could never get in |
+| 25 handlers declared the callback param as `cb` | aiogram injects it as `callback_data` → every one of those buttons raised `TypeError` |
+| `_injury_keyboard()` returned a builder, not a markup | the injury step crashed → onboarding could not be completed |
+| Consultation examples packed whole Arabic sentences into callback data | >64 bytes → the entire consult panel failed to render |
+| `ChatActionSender.uploading_photo` (correct name: `upload_photo`) | every photo-upload path crashed |
+| `admin.py` called `load_overrides/describe/set_override` on the router *module* | the model-routing panel and `/route` crashed |
+| `rule.time_of_day` (model has `hour`/`minute`) | the reminder toggle button crashed |
+| Telegram's client locale overwrote the chosen language on every update | switching to English reverted to Arabic on the next message |
+| `editMessageText` sent with a reply keyboard | "re-check channel subscription" crashed instead of showing the menu |
+| `BroadcastService.create()` opened a second session | on SQLite (documented dev path) → "database is locked"; now reuses the request session |
+| GDPR wipe left body metrics/daily logs behind | `deactivate_user_data` now clears them and deletes `daily_logs` |
+| Photo deletion only removed progress photos | food photos are personal images too — now purged as well |

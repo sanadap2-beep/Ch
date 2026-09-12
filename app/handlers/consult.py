@@ -95,9 +95,18 @@ async def start_question(callback: CallbackQuery, lang: str, state: FSMContext) 
 
 @router.callback_query(ConsultCB.filter(F.action == "example"))
 async def use_example(
-    callback: CallbackQuery, cb: ConsultCB, user: User, lang: str, services: Services, state: FSMContext
+    callback: CallbackQuery, callback_data: ConsultCB, user: User, lang: str, services: Services, state: FSMContext
 ) -> None:
-    await ask(callback, cb.arg, user=user, lang=lang, services=services, state=state)
+    """``arg`` is the example's index (see keyboards.consult_menu); fall back to raw text."""
+    examples = consult_examples(lang)
+    question = callback_data.arg
+    try:
+        index = int(callback_data.arg)
+    except (TypeError, ValueError):
+        index = -1
+    if 0 <= index < len(examples):
+        question = examples[index]
+    await ask(callback, question, user=user, lang=lang, services=services, state=state)
 
 
 @router.message(ConsultFlow.question, F.text)

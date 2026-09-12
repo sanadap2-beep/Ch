@@ -11,7 +11,7 @@ import logging
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.constants import BudgetLevel, Equipment, FoodStyle, Gender, Goal, InjuryArea
@@ -92,12 +92,12 @@ async def step_age(message: Message, user: User, lang: str, state: FSMContext, s
 
 @router.callback_query(Onboarding.gender, OnboardingCB.filter(F.step == "gender"))
 async def step_gender(
-    callback: CallbackQuery, cb: OnboardingCB, user: User, lang: str, state: FSMContext, services: Services
+    callback: CallbackQuery, callback_data: OnboardingCB, user: User, lang: str, state: FSMContext, services: Services
 ) -> None:
-    if cb.value not in {Gender.MALE.value, Gender.FEMALE.value}:
+    if callback_data.value not in {Gender.MALE.value, Gender.FEMALE.value}:
         await callback.answer()
         return
-    user.gender = cb.value
+    user.gender = callback_data.value
     await _flush(services, user, "height")
     await state.set_state(Onboarding.height)
     await callback.answer()
@@ -150,9 +150,9 @@ async def step_target_weight(
 
 @router.callback_query(Onboarding.activity, OnboardingCB.filter(F.step == "activity"))
 async def step_activity(
-    callback: CallbackQuery, cb: OnboardingCB, user: User, lang: str, state: FSMContext, services: Services
+    callback: CallbackQuery, callback_data: OnboardingCB, user: User, lang: str, state: FSMContext, services: Services
 ) -> None:
-    user.activity_level = cb.value
+    user.activity_level = callback_data.value
     await _flush(services, user, "goal")
     await state.set_state(Onboarding.goal)
     await callback.answer()
@@ -164,17 +164,17 @@ async def step_activity(
 # ═══════════════════════════════════════════════════════════════════════════
 @router.callback_query(Onboarding.goal, OnboardingCB.filter(F.step == "goal"))
 async def step_goal(
-    callback: CallbackQuery, cb: OnboardingCB, user: User, lang: str, state: FSMContext, services: Services
+    callback: CallbackQuery, callback_data: OnboardingCB, user: User, lang: str, state: FSMContext, services: Services
 ) -> None:
-    if cb.value == Goal.CUSTOM.value:
+    if callback_data.value == Goal.CUSTOM.value:
         await state.set_state(Onboarding.goal_custom)
         await callback.answer()
         await callback.message.answer(t(lang, "onb.ask_goal_custom"), reply_markup=remove_keyboard())
         return
-    if cb.value not in GOAL_KEYS:
+    if callback_data.value not in GOAL_KEYS:
         await callback.answer()
         return
-    user.goal = cb.value
+    user.goal = callback_data.value
     await _flush(services, user, "equipment")
     await state.set_state(Onboarding.equipment)
     await callback.answer()
@@ -198,12 +198,12 @@ async def step_goal_custom(
 
 @router.callback_query(Onboarding.equipment, OnboardingCB.filter(F.step == "equipment"))
 async def step_equipment(
-    callback: CallbackQuery, cb: OnboardingCB, user: User, lang: str, state: FSMContext, services: Services
+    callback: CallbackQuery, callback_data: OnboardingCB, user: User, lang: str, state: FSMContext, services: Services
 ) -> None:
-    if cb.value not in {item.value for item in Equipment}:
+    if callback_data.value not in {item.value for item in Equipment}:
         await callback.answer()
         return
-    user.equipment = cb.value
+    user.equipment = callback_data.value
     await _flush(services, user, "injuries")
     await state.set_state(Onboarding.injuries)
     await callback.answer()
@@ -220,7 +220,7 @@ def _injury_hint(lang: str) -> str:
     )
 
 
-def _injury_keyboard(lang: str) -> InlineKeyboardBuilder:
+def _injury_keyboard(lang: str) -> InlineKeyboardMarkup:
     ar = lang.startswith("ar")
     labels = {
         InjuryArea.NONE.value: ("✅ لا شيء" if ar else "✅ None"),
@@ -242,18 +242,20 @@ def _injury_keyboard(lang: str) -> InlineKeyboardBuilder:
             row = []
     if row:
         builder.row(*row)
-    return builder
+    # Must be a markup, not the builder: aiogram validates reply_markup against
+    # InlineKeyboardMarkup and a bare builder raises a ValidationError at send time.
+    return builder.as_markup()
 
 
 @router.callback_query(Onboarding.injuries, OnboardingCB.filter(F.step == "injury"))
-async def step_injury_choice(callback: CallbackQuery, cb: OnboardingCB, lang: str, state: FSMContext) -> None:
+async def step_injury_choice(callback: CallbackQuery, callback_data: OnboardingCB, lang: str, state: FSMContext) -> None:
     """Quick-pick injury areas for users who prefer tapping over typing."""
     data = await state.get_data()
     areas: list[str] = list(data.get("injury_areas") or [])
-    if cb.value == InjuryArea.NONE.value:
+    if callback_data.value == InjuryArea.NONE.value:
         areas = []
-    elif cb.value not in areas:
-        areas.append(cb.value)
+    elif callback_data.value not in areas:
+        areas.append(callback_data.value)
     await state.update_data(injury_areas=areas)
     ar = lang.startswith("ar")
     label = "، ".join(areas) if areas else ("لا شيء" if ar else "none")
@@ -303,12 +305,12 @@ async def step_injuries(
 # ═══════════════════════════════════════════════════════════════════════════
 @router.callback_query(Onboarding.budget, OnboardingCB.filter(F.step == "budget"))
 async def step_budget(
-    callback: CallbackQuery, cb: OnboardingCB, user: User, lang: str, state: FSMContext, services: Services
+    callback: CallbackQuery, callback_data: OnboardingCB, user: User, lang: str, state: FSMContext, services: Services
 ) -> None:
-    if cb.value not in {item.value for item in BudgetLevel}:
+    if callback_data.value not in {item.value for item in BudgetLevel}:
         await callback.answer()
         return
-    user.budget_level = cb.value
+    user.budget_level = callback_data.value
     await _flush(services, user, "food_style")
     await state.set_state(Onboarding.food_style)
     await callback.answer()
@@ -317,10 +319,10 @@ async def step_budget(
 
 @router.callback_query(Onboarding.food_style, OnboardingCB.filter(F.step == "food"))
 async def step_food_choice(
-    callback: CallbackQuery, cb: OnboardingCB, user: User, lang: str, state: FSMContext, services: Services
+    callback: CallbackQuery, callback_data: OnboardingCB, user: User, lang: str, state: FSMContext, services: Services
 ) -> None:
     ar = lang.startswith("ar")
-    if cb.value == "_custom":
+    if callback_data.value == "_custom":
         await state.set_state(Onboarding.food_custom)
         await callback.answer()
         await callback.message.answer(
@@ -330,10 +332,10 @@ async def step_food_choice(
             reply_markup=remove_keyboard(),
         )
         return
-    if cb.value not in {item.value for item in FoodStyle}:
+    if callback_data.value not in {item.value for item in FoodStyle}:
         await callback.answer()
         return
-    user.food_style = cb.value
+    user.food_style = callback_data.value
     await _flush(services, user, "disliked")
     await state.set_state(Onboarding.disliked)
     await callback.answer()

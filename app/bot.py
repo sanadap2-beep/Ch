@@ -55,12 +55,15 @@ def build_dispatcher(bot: Bot) -> Dispatcher:
     dp = Dispatcher(storage=create_storage())
     dp["settings"] = settings
 
-    # Order matters: throttle before touching the database, user context last
-    # (it needs `services` from DatabaseMiddleware).
+    # Order matters: throttle before touching the database, then the session.
+    # UserContextMiddleware is an *inner* middleware on purpose — aiogram only puts
+    # the resolved HandlerObject into `data["handler"]` inside trigger(), so an outer
+    # middleware would never see which handler is about to run and could not honour
+    # the gate exemptions (/start, privacy consent, forced-subscription check).
     for observer in (dp.message, dp.callback_query, dp.edited_message, dp.inline_query):
         observer.outer_middleware(ThrottlingMiddleware())
         observer.outer_middleware(DatabaseMiddleware())
-        observer.outer_middleware(UserContextMiddleware())
+        observer.middleware(UserContextMiddleware())
 
     dp.include_routers(*routers)
 

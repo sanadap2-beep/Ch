@@ -322,10 +322,13 @@ def consult_menu(lang: str, examples: Sequence[str] | None = None) -> InlineKeyb
     ar = is_ar(lang)
     rows: list[list[InlineKeyboardButton]] = []
     if examples:
-        for example in list(examples)[:4]:
+        # Telegram caps callback_data at 64 bytes, so buttons carry the example's
+        # index and the handler resolves the text — Arabic examples are ~2 bytes/char
+        # and would blow the limit (and crash the whole panel) if packed directly.
+        for index, example in enumerate(list(examples)[:4]):
             rows.append([InlineKeyboardButton(
                 text=(example[:60] + ("…" if len(example) > 60 else "")),
-                callback_data=ConsultCB(action="example", arg=example[:120]).pack(),
+                callback_data=ConsultCB(action="example", arg=str(index)).pack(),
             )])
     rows.append([InlineKeyboardButton(text=("✍️ سؤال جديد" if ar else "✍️ New question"),
                                       callback_data=ConsultCB(action="start").pack())])

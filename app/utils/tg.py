@@ -59,7 +59,12 @@ async def edit_or_send(
     """Edit the current message when the text fits, otherwise send a new one."""
     parts = chunk(text, TELEGRAM_CHUNK_LIMIT) or ["…"]
     await callback.answer()
-    if len(parts) == 1:
+    # Telegram only accepts an InlineKeyboardMarkup on editMessageText. A reply
+    # keyboard (the persistent bottom menu) or a ReplyKeyboardRemove must ride on a
+    # freshly *sent* message, so in that case skip the edit entirely — otherwise the
+    # call fails client-side validation and the user gets an error instead of a menu.
+    editable = reply_markup is None or isinstance(reply_markup, InlineKeyboardMarkup)
+    if editable and len(parts) == 1:
         try:
             await callback.message.edit_text(
                 parts[0], reply_markup=reply_markup, parse_mode="HTML", **kwargs
@@ -111,7 +116,7 @@ def typing(bot: Bot, chat_id: int) -> Any:
 
 
 def uploading_photo(bot: Bot, chat_id: int) -> Any:
-    return ChatActionSender.uploading_photo(bot=bot, chat_id=chat_id)
+    return ChatActionSender.upload_photo(bot=bot, chat_id=chat_id)
 
 
 async def notify(bot: Bot | None, tg_id: int, text: str) -> bool:

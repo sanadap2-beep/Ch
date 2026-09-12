@@ -112,9 +112,9 @@ async def ask_photo(callback: CallbackQuery, lang: str, state: FSMContext) -> No
 
 
 @router.callback_query(ProgressCB.filter(F.action == "angle"))
-async def choose_angle(callback: CallbackQuery, cb: ProgressCB, lang: str, state: FSMContext) -> None:
+async def choose_angle(callback: CallbackQuery, callback_data: ProgressCB, lang: str, state: FSMContext) -> None:
     await state.set_state(ProgressFlow.waiting_photo)
-    await state.update_data(angle=cb.arg)
+    await state.update_data(angle=callback_data.arg)
     await callback.answer()
     await callback.message.answer(t(lang, "prog.ask_photo"), reply_markup=remove_keyboard())
 
@@ -172,9 +172,9 @@ async def chart(callback: CallbackQuery, user: User, lang: str, services: Servic
 
 
 @router.callback_query(ProgressCB.filter(F.action.in_({"report_week", "report_month"})))
-async def report(callback: CallbackQuery, cb: ProgressCB, user: User, lang: str, services: Services) -> None:
+async def report(callback: CallbackQuery, callback_data: ProgressCB, user: User, lang: str, services: Services) -> None:
     await callback.answer()
-    period = "month" if cb.action == "report_month" else "week"
+    period = "month" if callback_data.action == "report_month" else "week"
     try:
         async with typing(callback.bot, callback.message.chat.id):
             text = await services.reports.periodic(user, period=period, lang=lang)

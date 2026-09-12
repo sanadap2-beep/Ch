@@ -55,9 +55,9 @@ async def menu_callback(callback: CallbackQuery, user: User, lang: str, services
 # ═══════════════════════════════════════════════════════════════════════════
 @router.callback_query(PlanCB.filter(F.action == "generate"))
 async def generate(
-    callback: CallbackQuery, cb: PlanCB, user: User, lang: str, services: Services, state: FSMContext
+    callback: CallbackQuery, callback_data: PlanCB, user: User, lang: str, services: Services, state: FSMContext
 ) -> None:
-    kind = cb.kind if cb.kind in VALID_KINDS else "training"
+    kind = callback_data.kind if callback_data.kind in VALID_KINDS else "training"
     await callback.answer(t(lang, "plan.generating"))
     if not user.onboarding_done:
         await callback.message.answer(t(lang, "onb.welcome"), reply_markup=remove_keyboard())

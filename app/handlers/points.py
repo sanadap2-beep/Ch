@@ -106,9 +106,9 @@ async def balance(callback: CallbackQuery, user: User, lang: str, services: Serv
 #  ledger (paginated)
 # ═══════════════════════════════════════════════════════════════════════════
 @router.callback_query(PointsCB.filter(F.action == "ledger"))
-async def ledger(callback: CallbackQuery, cb: PointsCB, user: User, lang: str, services: Services) -> None:
+async def ledger(callback: CallbackQuery, callback_data: PointsCB, user: User, lang: str, services: Services) -> None:
     ar = lang.startswith("ar")
-    page = max(0, cb.page)
+    page = max(0, callback_data.page)
     entries = await services.repos.economy.ledger(user.id, limit=PAGE_SIZE, offset=page * PAGE_SIZE)
     total = await services.repos.economy.ledger_count(user.id)
     if not entries:
