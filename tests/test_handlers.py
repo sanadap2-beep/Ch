@@ -33,10 +33,8 @@ from app.db.models import User
 from tests import conftest
 from tests.telegram_mock import (
     MockedSession,
-    build_test_dispatcher,
     callback_update,
     feed,
-    make_bot,
     photo_update,
     text_update,
     voice_update,
@@ -50,30 +48,6 @@ NEW_TG_ID = 999000
 # ═══════════════════════════════════════════════════════════════════════════
 #  fixtures
 # ═══════════════════════════════════════════════════════════════════════════
-@pytest.fixture(autouse=True)
-def _fresh_ai_cache():
-    """The routing/budget cache is process-wide — never leak it between tests."""
-    ai_router.invalidate_cache()
-    yield
-    ai_router.invalidate_cache()
-
-
-@pytest_asyncio.fixture
-async def tg(session) -> SimpleNamespace:
-    """Bot + dispatcher + mocked transport, sharing the test database.
-
-    Each test builds its own Dispatcher so FSM state never leaks between tests.
-    aiogram refuses to attach a router that already has a parent, so the shared
-    application routers are detached again on teardown.
-    """
-    bot, api = make_bot()
-    dp = build_test_dispatcher(bot)
-    try:
-        yield SimpleNamespace(bot=bot, api=api, dp=dp, session=session)
-    finally:
-        await bot.session.close()
-
-
 async def say(tg: SimpleNamespace, text: str, *, tg_id: int = USER_TG_ID) -> MockedSession:
     tg.api.clear()
     await feed(tg.dp, tg.bot, text_update(text, tg_id=tg_id))

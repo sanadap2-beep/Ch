@@ -344,3 +344,35 @@ async def coach_user(session, user) -> User:
     user.coach_access_until = datetime.now(UTC) + timedelta(days=30)
     await session.commit()
     return user
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Telegram-layer fixtures (real dispatcher, mocked transport)
+# ═══════════════════════════════════════════════════════════════════════════
+@pytest.fixture(autouse=True)
+def _fresh_ai_router_cache():
+    """Model-routing/budget overrides live in a process-wide cache — never leak them."""
+    from app.ai import router as ai_router
+
+    ai_router.invalidate_cache()
+    yield
+    ai_router.invalidate_cache()
+
+
+@pytest_asyncio.fixture
+async def tg(session) -> Any:
+    """Bot + production dispatcher + mocked Telegram transport on the test database.
+
+    Each test gets its own Dispatcher so FSM state cannot leak between tests; the
+    shared application routers are detached again by ``_detach_application_routers``.
+    """
+    from types import SimpleNamespace
+
+    from tests.telegram_mock import build_test_dispatcher, make_bot
+
+    bot, api = make_bot()
+    dp = build_test_dispatcher(bot)
+    try:
+        yield SimpleNamespace(bot=bot, api=api, dp=dp, session=session)
+    finally:
+        await bot.session.close()

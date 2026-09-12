@@ -167,7 +167,7 @@ reminders, safety, i18n, privacy, admin, webhook. Anything the product team may 
 * **Static guards** (`test_i18n_keyboards.py`) walk the AST of `app/` for two bug classes that
   only explode at send time: a bare `InlineKeyboardBuilder` passed as `reply_markup`, and long
   literals packed into callback data (Telegram's cap is 64 bytes; Arabic is ~2 bytes/char).
-* 276 tests across 8 files — see the coverage table in `README.md`.
+* 315 tests across 11 files — see the coverage table in `README.md`.
 
 ### Bugs this layer caught (all fixed)
 
@@ -185,4 +185,6 @@ reminders, safety, i18n, privacy, admin, webhook. Anything the product team may 
 | `editMessageText` sent with a reply keyboard | "re-check channel subscription" crashed instead of showing the menu |
 | `BroadcastService.create()` opened a second session | on SQLite (documented dev path) → "database is locked"; now reuses the request session |
 | GDPR wipe left body metrics/daily logs behind | `deactivate_user_data` now clears them and deletes `daily_logs` |
+| `CommandStart(deep_link=True)` swallowed bare `/start` | see the table above — fixed by registering both filters |
+| `ALLOWED_UPDATES` asked Telegram for 4 update types nothing handled | trimmed to `message`/`callback_query`/`my_chat_member`, and a `my_chat_member` handler now pauses reminders when a user blocks the bot and re-arms only those it paused when they return |
 | Photo deletion only removed progress photos | food photos are personal images too — now purged as well |
