@@ -158,7 +158,9 @@ def _active_env_pairs(text: str) -> dict[str, str]:
     return pairs
 
 
-def test_env_example_loads_as_a_real_env_file(tmp_path: Path) -> None:
+def test_env_example_loads_as_a_real_env_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """`cp .env.example .env`, fill in the secrets, and the app must boot.
 
     Loaded as an env *file* — the path a real deploy takes — so inline comments
@@ -172,6 +174,12 @@ def test_env_example_loads_as_a_real_env_file(tmp_path: Path) -> None:
     """
     env_file = tmp_path / ".env"
     env_file.write_text(ENV_EXAMPLE, encoding="utf-8")
+
+    # A live environment outranks a dotenv file in pydantic-settings, and CI
+    # exports ADMIN_IDS/DATABASE_URL at job level — without clearing them this
+    # test would assert against CI's values instead of the file's.
+    for key in _active_env_pairs(ENV_EXAMPLE):
+        monkeypatch.delenv(key, raising=False)
 
     settings = Settings(_env_file=env_file)  # must not raise
 
