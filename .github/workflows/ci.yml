@@ -11,6 +11,32 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    # Real PostgreSQL, not SQLite: the migration and the boot check then run
+    # against the same driver (asyncpg) and server used in production.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: coach
+          POSTGRES_PASSWORD: coach_ci_password
+          POSTGRES_DB: coach_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U coach -d coach_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Placeholder credentials so config validation passes. The suite is fully
+      # offline (AI calls are faked) so no real secret is ever needed here.
+      BOT_TOKEN: "123456789:CI-token-not-real"
+      NANOGPT_API_KEY: "ci-key-not-real"
+      ADMIN_IDS: "1"
+      DATABASE_URL: "postgresql+asyncpg://coach:coach_ci_password@localhost:5432/coach_ci"
+      DB_AUTO_CREATE: "false"
+
     steps:
       - uses: actions/checkout@v4
 
@@ -30,29 +56,43 @@ jobs:
         run: |
           python -m pip install --upgrade pip wheel
           pip install -r requirements.txt -r requirements-dev.txt
-          pip install ruff arabic-reshaper python-bidi fonttools
 
       - name: Ruff
         run: ruff check app tests
 
+      # Migrations first, so the boot check below finds a real schema.
+      - name: Alembic migration applies against a clean PostgreSQL database
+        run: |
+          alembic upgrade head
+          echo "── tables created ──"
+          python - <<'PY'
+          import asyncio, os
+          from sqlalchemy.ext.asyncio import create_async_engine
+          from sqlalchemy import text
+
+          async def main() -> None:
+              engine = create_async_engine(os.environ["DATABASE_URL"])
+              async with engine.connect() as conn:
+                  rows = (await conn.execute(text(
+                      "select table_name from information_schema.tables "
+                      "where table_schema='public' order by table_name"
+                  ))).scalars().all()
+              await engine.dispose()
+              print(f"{len(rows)} tables:")
+              for name in rows:
+                  print(f"  {name}")
+              assert len(rows) >= 21, f"expected >=21 tables, got {len(rows)}"
+
+          asyncio.run(main())
+          PY
+
       - name: Every module imports and the dispatcher builds
-        env:
-          BOT_TOKEN: "123456789:CI-token-not-real"
-          NANOGPT_API_KEY: "ci-key-not-real"
-          DATABASE_URL: "sqlite+aiosqlite:///./storage/tmp/ci-check.db"
         run: ./scripts/run.sh --check
 
       - name: Pytest (offline — no network, no secrets needed)
-        env:
-          BOT_TOKEN: "123456789:CI-token-not-real"
-          NANOGPT_API_KEY: "ci-key-not-real"
-        run: pytest -q --maxfail=5
-
-      - name: Alembic migration applies against a clean database
-        env:
-          DATABASE_URL: "sqlite+aiosqlite:///./storage/tmp/ci-migration.db"
-          DB_AUTO_CREATE: "false"
         run: |
           mkdir -p storage/tmp
-          alembic upgrade head
-          alembic check || true    # autogenerate drift is reported, not fatal, on SQLite
+          pytest -q --maxfail=5
+
+      - name: Config/docs drift guards
+        run: pytest tests/test_config_docs.py tests/test_dependencies.py -q
